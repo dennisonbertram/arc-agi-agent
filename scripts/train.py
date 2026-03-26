@@ -1,91 +1,50 @@
-#!/usr/bin/env python
-"""Entry point for training the ARC-AGI-3 RL agent.
-
-Usage:
-    python scripts/train.py [options]
-
-Examples:
-    python scripts/train.py --total-steps 100000
-    python scripts/train.py --total-steps 50000 --checkpoint checkpoints/run1
-    python scripts/train.py --resume checkpoints/latest.pt
-"""
-from __future__ import annotations
-
+#!/usr/bin/env python3
+"""Train the ARC-AGI-3 RL agent."""
 import argparse
-from pathlib import Path
+import sys
+sys.path.insert(0, ".")
+
+from src.config import config
+from src.training.trainer import PPOTrainer
+from src.environment.arc_env_wrapper import ArcEnvWrapper
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments for the training script.
+def main():
+    parser = argparse.ArgumentParser(description="Train ARC-AGI-3 RL agent")
+    parser.add_argument("--game", default="ls20", help="Game ID to train on")
+    parser.add_argument("--mode", default="OFFLINE", choices=["OFFLINE", "ONLINE", "NORMAL"])
+    parser.add_argument("--steps", type=int, default=50, help="Number of training iterations")
+    parser.add_argument("--rollout", type=int, default=200, help="Steps per rollout")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Resume from checkpoint")
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--device", default="cpu")
+    args = parser.parse_args()
 
-    Returns
-    -------
-    argparse.Namespace
-    """
-    parser = argparse.ArgumentParser(
-        description="Train the ARC-AGI-3 PPO RL agent.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--total-steps",
-        type=int,
-        default=200_000,
-        help="Total environment interaction steps.",
-    )
-    parser.add_argument(
-        "--rollout-steps",
-        type=int,
-        default=None,
-        help="Steps per rollout (defaults to batch_size from config).",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        default=None,
-        help="Directory to save checkpoints.",
-    )
-    parser.add_argument(
-        "--resume",
-        type=Path,
-        default=None,
-        help="Path to checkpoint to resume training from.",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        choices=["cpu", "cuda", "mps"],
-        help="Torch device.",
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=Path,
-        default=None,
-        help="TensorBoard log directory.",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="OFFLINE",
-        choices=["OFFLINE", "ONLINE"],
-        help="Operation mode.",
-    )
-    return parser.parse_args()
+    print(f"Training on game: {args.game} (mode: {args.mode})")
+    print(f"Steps: {args.steps}, Rollout: {args.rollout}, LR: {args.lr}")
 
+    trainer = PPOTrainer(lr=args.lr, device=args.device)
+    if args.checkpoint:
+        trainer.load_checkpoint(args.checkpoint)
+        print(f"Resumed from {args.checkpoint}")
 
-def main() -> None:
-    """Run the PPO training loop.
+    env = ArcEnvWrapper(args.game, mode=args.mode, max_actions=config.max_actions_per_game)
 
-    Raises
-    ------
-    NotImplementedError
-        Until the trainer and environment are implemented.
-    """
-    args = parse_args()
-    raise NotImplementedError(
-        "train.py main() is not yet implemented. "
-        "Implement PPOTrainer, ArcEnvWrapper, and RLAgent first."
-    )
+    for step in range(args.steps):
+        rollout_stats = trainer.collect_rollout(env, args.rollout)
+        update_stats = trainer.update()
+
+        if (step + 1) % 5 == 0 or step == 0:
+            print(f"Step {step+1}/{args.steps} | "
+                  f"Reward: {rollout_stats['mean_reward']:.3f} | "
+                  f"Episodes: {rollout_stats['episodes']} | "
+                  f"P-Loss: {update_stats['policy_loss']:.4f} | "
+                  f"V-Loss: {update_stats['value_loss']:.4f} | "
+                  f"Entropy: {update_stats['entropy']:.4f}")
+
+    save_path = config.checkpoint_dir / "latest.pt"
+    trainer.save_checkpoint(save_path)
+    print(f"\nSaved checkpoint to {save_path}")
 
 
 if __name__ == "__main__":

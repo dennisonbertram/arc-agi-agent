@@ -1,89 +1,37 @@
-#!/usr/bin/env python
-"""Entry point for running the recursive self-improvement loop.
-
-Usage:
-    python scripts/self_improve.py --checkpoint checkpoints/base.pt [options]
-
-Examples:
-    python scripts/self_improve.py --checkpoint checkpoints/base.pt --iterations 5
-    python scripts/self_improve.py --checkpoint checkpoints/base.pt --iterations 10 --games 8
-"""
-from __future__ import annotations
-
+#!/usr/bin/env python3
+"""Run self-improvement loop."""
 import argparse
-from pathlib import Path
+import sys
+sys.path.insert(0, ".")
+
+from src.training.trainer import PPOTrainer
+from src.training.self_improver import SelfImprover
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments.
+def main():
+    parser = argparse.ArgumentParser(description="Run self-improvement loop")
+    parser.add_argument("--games", nargs="+", default=["ls20"])
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--train-steps", type=int, default=20)
+    parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument("--device", default="cpu")
+    args = parser.parse_args()
 
-    Returns
-    -------
-    argparse.Namespace
-    """
-    parser = argparse.ArgumentParser(
-        description="Run the ARC-AGI-3 RL agent self-improvement loop.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        required=True,
-        help="Starting checkpoint for self-improvement.",
-    )
-    parser.add_argument(
-        "--iterations",
-        type=int,
-        default=None,
-        help="Number of self-improvement iterations (defaults to config).",
-    )
-    parser.add_argument(
-        "--games",
-        type=int,
-        default=None,
-        help="Games per rollout iteration (defaults to config).",
-    )
-    parser.add_argument(
-        "--eval-games",
-        type=int,
-        default=None,
-        help="Games used for evaluation each iteration (defaults to config).",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=None,
-        help="Minimum improvement fraction to accept an update (defaults to config).",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Directory to save self-improvement checkpoints.",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        choices=["cpu", "cuda", "mps"],
-        help="Torch device.",
-    )
-    return parser.parse_args()
+    trainer = PPOTrainer(device=args.device)
+    if args.checkpoint:
+        trainer.load_checkpoint(args.checkpoint)
 
-
-def main() -> None:
-    """Load a checkpoint and run the self-improvement loop.
-
-    Raises
-    ------
-    NotImplementedError
-        Until SelfImprover and supporting classes are implemented.
-    """
-    args = parse_args()
-    raise NotImplementedError(
-        "self_improve.py main() is not yet implemented. "
-        "Implement SelfImprover, PPOTrainer, and Evaluator first."
+    improver = SelfImprover(
+        trainer=trainer,
+        game_ids=args.games,
+        max_iterations=args.iterations,
+        train_steps_per_iter=args.train_steps,
     )
+
+    summary = improver.run()
+    print(f"\nFinal summary:")
+    print(f"  Best score: {summary['best_score']:.4f} at iteration {summary['best_iteration']}")
+    print(f"  Trajectory: {summary['improvement_trajectory']}")
 
 
 if __name__ == "__main__":

@@ -1,84 +1,55 @@
-#!/usr/bin/env python
-"""Entry point for playing a single ARC-AGI-3 game interactively.
-
-Usage:
-    python scripts/play_game.py [options]
-
-Examples:
-    python scripts/play_game.py --agent random
-    python scripts/play_game.py --agent rl --checkpoint checkpoints/best.pt
-    python scripts/play_game.py --task-id abc123 --render
-"""
-from __future__ import annotations
-
+#!/usr/bin/env python3
+"""Play a single game interactively or with trained agent."""
 import argparse
-from pathlib import Path
+import sys
+sys.path.insert(0, ".")
+
+from src.environment.arc_env_wrapper import ArcEnvWrapper
+from src.utils.grid_viz import print_grid
+import numpy as np
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments.
+def main():
+    parser = argparse.ArgumentParser(description="Play ARC-AGI-3 game")
+    parser.add_argument("--game", default="ls20")
+    parser.add_argument("--mode", default="OFFLINE")
+    parser.add_argument("--random", action="store_true", help="Use random agent")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Use trained agent")
+    parser.add_argument("--max-actions", type=int, default=50)
+    args = parser.parse_args()
 
-    Returns
-    -------
-    argparse.Namespace
-    """
-    parser = argparse.ArgumentParser(
-        description="Play a single ARC-AGI-3 game.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--agent",
-        type=str,
-        default="random",
-        choices=["random", "rl"],
-        help="Which agent to use.",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        default=None,
-        help="Checkpoint for RL agent (required when --agent rl).",
-    )
-    parser.add_argument(
-        "--task-id",
-        type=str,
-        default=None,
-        help="Specific task ID to play. Random if not set.",
-    )
-    parser.add_argument(
-        "--render",
-        action="store_true",
-        help="Render each game step using matplotlib.",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="OFFLINE",
-        choices=["OFFLINE", "ONLINE"],
-        help="Operation mode.",
-    )
-    parser.add_argument(
-        "--record",
-        type=Path,
-        default=None,
-        help="Save the game trajectory to this file.",
-    )
-    return parser.parse_args()
+    env = ArcEnvWrapper(args.game, mode=args.mode, max_actions=args.max_actions)
+    obs = env.reset()
 
+    print(f"Playing {args.game}")
 
-def main() -> None:
-    """Set up the chosen agent and play one game.
+    agent = None
+    if args.checkpoint:
+        from src.agent.rl_agent import RLAgent
+        agent = RLAgent(args.game, checkpoint_path=args.checkpoint)
 
-    Raises
-    ------
-    NotImplementedError
-        Until the agent and environment are implemented.
-    """
-    args = parse_args()
-    raise NotImplementedError(
-        "play_game.py main() is not yet implemented. "
-        "Implement ArcEnvWrapper and at least RandomAgent first."
-    )
+    info = {"state": "NOT_STARTED", "action_count": 0, "levels_completed": 0}
+    for step in range(args.max_actions):
+        if agent is not None:
+            import torch
+            grid = obs["grid"].unsqueeze(0)
+            aux = obs["aux"].unsqueeze(0)
+            mask = obs["available_actions"].unsqueeze(0)
+            with torch.no_grad():
+                action, x, y, _, _ = agent.policy.sample(grid, aux, mask)
+            action_int, x_int, y_int = action.item(), x.item(), y.item()
+        else:
+            action_int = np.random.randint(1, 6)
+            x_int, y_int = np.random.randint(0, 64), np.random.randint(0, 64)
+
+        obs, reward, done, info = env.step(action_int, x_int, y_int)
+        print(f"Step {step+1}: action={action_int} reward={reward:.3f} state={info['state']}")
+
+        if done:
+            print(f"Game ended: {info['state']}")
+            break
+
+    print(f"Total actions: {info['action_count']}, Levels: {info.get('levels_completed', 0)}")
 
 
 if __name__ == "__main__":

@@ -1,89 +1,28 @@
-#!/usr/bin/env python
-"""Entry point for evaluating a trained ARC-AGI-3 RL agent checkpoint.
-
-Usage:
-    python scripts/evaluate.py --checkpoint checkpoints/latest.pt [options]
-
-Examples:
-    python scripts/evaluate.py --checkpoint checkpoints/best.pt --games 20
-    python scripts/evaluate.py --checkpoint checkpoints/best.pt --task-id abc123
-"""
-from __future__ import annotations
-
+#!/usr/bin/env python3
+"""Evaluate trained agent."""
 import argparse
-from pathlib import Path
+import sys
+sys.path.insert(0, ".")
+
+from src.agent.rl_agent import RLAgent
+from src.evaluation.evaluator import Evaluator
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments for the evaluation script.
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate ARC-AGI-3 RL agent")
+    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint")
+    parser.add_argument("--games", nargs="+", default=["ls20"])
+    parser.add_argument("--mode", default="OFFLINE")
+    parser.add_argument("--device", default="cpu")
+    args = parser.parse_args()
 
-    Returns
-    -------
-    argparse.Namespace
-    """
-    parser = argparse.ArgumentParser(
-        description="Evaluate a trained ARC-AGI-3 RL agent.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        required=True,
-        help="Path to the .pt checkpoint file.",
-    )
-    parser.add_argument(
-        "--games",
-        type=int,
-        default=None,
-        help="Number of evaluation games (defaults to config.eval_games).",
-    )
-    parser.add_argument(
-        "--task-id",
-        type=str,
-        default=None,
-        help="Evaluate on a specific task ID (overrides random selection).",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        choices=["cpu", "cuda", "mps"],
-        help="Torch device.",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="OFFLINE",
-        choices=["OFFLINE", "ONLINE"],
-        help="Operation mode.",
-    )
-    parser.add_argument(
-        "--record",
-        action="store_true",
-        help="Save game recordings to disk.",
-    )
-    parser.add_argument(
-        "--recording-dir",
-        type=Path,
-        default=None,
-        help="Directory for saved recordings.",
-    )
-    return parser.parse_args()
+    agent = RLAgent("eval", checkpoint_path=args.checkpoint, device=args.device)
+    evaluator = Evaluator(agent=agent, game_ids=args.games, mode=args.mode)
 
-
-def main() -> None:
-    """Load a checkpoint and run evaluation.
-
-    Raises
-    ------
-    NotImplementedError
-        Until the evaluator and agent are implemented.
-    """
-    args = parse_args()
-    raise NotImplementedError(
-        "evaluate.py main() is not yet implemented. "
-        "Implement Evaluator and RLAgent first."
-    )
+    print(f"Evaluating on {len(args.games)} games...")
+    results = evaluator.evaluate()
+    print(f"\nResults: {results['wins']}/{results['num_games']} wins, "
+          f"mean reward: {results['mean_reward']:.3f}")
 
 
 if __name__ == "__main__":

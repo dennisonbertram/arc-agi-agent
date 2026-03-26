@@ -31,7 +31,7 @@ class ArcEnvWrapper:
         if HAS_ARC:
             from arc_agi import Arcade, OperationMode
             modes = {"OFFLINE": OperationMode.OFFLINE, "ONLINE": OperationMode.ONLINE, "NORMAL": OperationMode.NORMAL}
-            arc = Arcade(operation_mode=modes.get(mode, OperationMode.OFFLINE), arc_api_key=api_key or None)
+            arc = Arcade(operation_mode=modes.get(mode, OperationMode.OFFLINE), arc_api_key=api_key if api_key is not None else "")
             self._env = arc.make(game_id)
 
     def reset(self) -> dict:
