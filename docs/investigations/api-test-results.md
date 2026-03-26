@@ -11,7 +11,7 @@ API connection is confirmed working. The arc-agi SDK successfully connects to `h
 ## Step 1: Direct curl Test
 
 ```
-curl -s -H "X-API-Key: REDACTED-..." https://three.arcprize.org/api/games
+curl -s -H "X-API-Key: <REDACTED>" https://three.arcprize.org/api/games
 ```
 
 **Result:** HTTP 200 OK
