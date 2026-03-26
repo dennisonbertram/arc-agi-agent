@@ -1,126 +1,107 @@
-"""Replay buffer and transition types for PPO training."""
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Any
-
+"""PPO rollout buffer with GAE."""
 import torch
-
-from src.config import config
+import numpy as np
+from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
 class Transition:
-    """A single environment transition stored in the replay buffer.
-
-    Attributes
-    ----------
-    state:
-        Encoded state tensor of shape ``(embedding_dim,)``.
-    action:
-        Integer action index taken at this step.
-    log_prob:
-        Log-probability of the taken action under the behaviour policy.
-    reward:
-        Scalar reward received after taking the action.
-    value:
-        Value estimate V(s) from the critic at this step.
-    done:
-        Whether this transition ends the episode.
-    aux_features:
-        Optional auxiliary feature vector.
-    info:
-        Optional dict with extra environment info.
-    """
-
-    state: torch.Tensor
-    action: int
-    log_prob: float
+    grid: torch.Tensor
+    aux: torch.Tensor
+    available_actions: torch.Tensor
+    action_type: int
+    action_x: int
+    action_y: int
     reward: float
-    value: float
     done: bool
-    aux_features: torch.Tensor | None = None
-    info: dict[str, Any] = field(default_factory=dict)
+    log_prob: float
+    value: float
 
 
 class ReplayBuffer:
-    """Fixed-size circular buffer that stores :class:`Transition` objects.
+    def __init__(self, max_size: int = 10000):
+        self.max_size = max_size
+        self.transitions: list[Transition] = []
+        self.episode_boundaries: list[int] = [0]
+        self._adv: Optional[torch.Tensor] = None
+        self._ret: Optional[torch.Tensor] = None
 
-    Used to accumulate experience from rollouts before a PPO update.
+    def add(self, t: Transition):
+        self.transitions.append(t)
+        if len(self.transitions) > self.max_size:
+            self.transitions.pop(0)
+            self.episode_boundaries = [max(0, b - 1) for b in self.episode_boundaries]
+        self._adv = self._ret = None
 
-    Parameters
-    ----------
-    capacity:
-        Maximum number of transitions to store. When full, the oldest
-        transitions are overwritten.
-    """
+    def mark_episode_end(self):
+        self.episode_boundaries.append(len(self.transitions))
 
-    def __init__(self, capacity: int | None = None) -> None:
-        self.capacity: int = capacity if capacity is not None else config.buffer_size
-        self._buffer: list[Transition] = []
-        self._pos: int = 0
+    def compute_gae(self, gamma=0.99, lam=0.95):
+        n = len(self.transitions)
+        if n == 0:
+            return torch.tensor([]), torch.tensor([])
+        adv, ret = torch.zeros(n), torch.zeros(n)
+        bounds = sorted(set(self.episode_boundaries))
+        if bounds[-1] != n:
+            bounds.append(n)
+        for i in range(len(bounds) - 1):
+            s, e = bounds[i], bounds[i + 1]
+            if s >= e:
+                continue
+            gae = 0.0
+            for t in reversed(range(s, e)):
+                tr = self.transitions[t]
+                nv = 0.0 if t == e - 1 or tr.done else self.transitions[t + 1].value
+                delta = tr.reward + gamma * nv * (1 - float(tr.done)) - tr.value
+                gae = delta + gamma * lam * (1 - float(tr.done)) * gae
+                adv[t], ret[t] = gae, gae + tr.value
+        self._adv, self._ret = adv, ret
+        return adv, ret
 
-    def push(self, transition: Transition) -> None:
-        """Add a transition to the buffer.
+    def sample_minibatch(self, batch_size: int):
+        n = len(self.transitions)
+        assert n > 0
+        if self._adv is None:
+            self.compute_gae()
+        idx = np.random.choice(n, min(batch_size, n), replace=False)
+        return {
+            'grids': torch.stack([self.transitions[i].grid for i in idx]),
+            'aux': torch.stack([self.transitions[i].aux for i in idx]),
+            'available_actions': torch.stack([self.transitions[i].available_actions for i in idx]),
+            'action_types': torch.tensor([self.transitions[i].action_type for i in idx], dtype=torch.long),
+            'action_x': torch.tensor([self.transitions[i].action_x for i in idx], dtype=torch.long),
+            'action_y': torch.tensor([self.transitions[i].action_y for i in idx], dtype=torch.long),
+            'old_log_probs': torch.tensor([self.transitions[i].log_prob for i in idx]),
+            'old_values': torch.tensor([self.transitions[i].value for i in idx]),
+            'advantages': self._adv[idx],
+            'returns': self._ret[idx],
+        }
 
-        Parameters
-        ----------
-        transition:
-            The transition to store.
+    def clear(self):
+        self.transitions.clear()
+        self.episode_boundaries = [0]
+        self._adv = self._ret = None
 
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("ReplayBuffer.push is not yet implemented.")
+    def __len__(self):
+        return len(self.transitions)
 
-    def sample(self, batch_size: int) -> list[Transition]:
-        """Sample a random batch of transitions.
-
-        Parameters
-        ----------
-        batch_size:
-            Number of transitions to sample.
-
-        Returns
-        -------
-        list[Transition]
-            A list of randomly sampled transitions.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("ReplayBuffer.sample is not yet implemented.")
-
-    def get_all(self) -> list[Transition]:
-        """Return all transitions currently in the buffer.
-
-        Returns
-        -------
-        list[Transition]
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("ReplayBuffer.get_all is not yet implemented.")
-
-    def clear(self) -> None:
-        """Empty the buffer.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("ReplayBuffer.clear is not yet implemented.")
-
-    def __len__(self) -> int:
-        return len(self._buffer)
-
-    def __repr__(self) -> str:
-        return f"ReplayBuffer(capacity={self.capacity}, size={len(self)})"
+    def episode_stats(self):
+        if not self.transitions:
+            return {"num_episodes": 0}
+        eps, bounds = [], sorted(set(self.episode_boundaries))
+        if bounds[-1] != len(self.transitions):
+            bounds.append(len(self.transitions))
+        for i in range(len(bounds) - 1):
+            s, e = bounds[i], bounds[i + 1]
+            if s >= e:
+                continue
+            rews = [self.transitions[t].reward for t in range(s, e)]
+            eps.append({"length": e - s, "total_reward": sum(rews)})
+        if not eps:
+            return {"num_episodes": 0}
+        return {
+            "num_episodes": len(eps),
+            "mean_length": np.mean([e["length"] for e in eps]),
+            "mean_total_reward": np.mean([e["total_reward"] for e in eps]),
+        }

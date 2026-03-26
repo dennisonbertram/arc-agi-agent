@@ -1,110 +1,68 @@
-"""Converts raw ARC game frames into tensors for the neural network."""
-from __future__ import annotations
-
-from typing import Any
-
+"""Converts ARC-AGI-3 frame data to PyTorch tensors."""
 import torch
+import numpy as np
+from dataclasses import dataclass, field
 
-from src.config import config
+
+@dataclass
+class MockFrame:
+    """Mock frame for testing when arc-agi is not installed."""
+    frame: list
+    state: str = "NOT_FINISHED"
+    levels_completed: int = 0
+    win_levels: int = 5
+    available_actions: list = field(default_factory=lambda: [1, 2, 3, 4, 5])
 
 
 class StateProcessor:
-    """Transforms raw ARC frames into normalised tensor observations.
+    """Converts ARC-AGI-3 frame data to tensors for neural networks."""
 
-    Responsibilities:
-    - Extract the current grid from the frame object
-    - One-hot encode color values
-    - Pad or crop to a fixed ``grid_size x grid_size`` canvas
-    - Compute auxiliary scalar features (step count, grid dimensions, etc.)
-    - Return a tuple of ``(grid_tensor, aux_features_tensor)``
+    GRID_SIZE = 64
+    NUM_COLORS = 16
+    AUX_DIM = 15
+    STATE_MAP = {"NOT_PLAYED": 0, "NOT_STARTED": 0, "NOT_FINISHED": 1, "WIN": 2, "GAME_OVER": 3}
 
-    Parameters
-    ----------
-    grid_size:
-        Target spatial size for the padded/cropped grid.
-    num_colors:
-        Number of distinct color values (depth of one-hot channels).
-    aux_feature_dim:
-        Number of auxiliary scalar features to compute.
-    device:
-        Torch device for the returned tensors.
-    """
+    def frame_to_tensor(self, frame) -> torch.Tensor:
+        """Convert frame grid to one-hot [16, 64, 64]."""
+        raw = frame.frame
+        if isinstance(raw, list) and len(raw) > 0:
+            if isinstance(raw[0], list) and len(raw[0]) > 0 and isinstance(raw[0][0], list):
+                grid_2d = raw[0]
+            else:
+                grid_2d = raw
+        else:
+            grid_2d = [[0] * self.GRID_SIZE for _ in range(self.GRID_SIZE)]
 
-    def __init__(
-        self,
-        grid_size: int | None = None,
-        num_colors: int | None = None,
-        aux_feature_dim: int | None = None,
-        device: torch.device | str = "cpu",
-    ) -> None:
-        self.grid_size = grid_size or config.grid_size
-        self.num_colors = num_colors or config.num_colors
-        self.aux_feature_dim = aux_feature_dim or config.aux_feature_dim
-        self.device = torch.device(device)
+        h, w = len(grid_2d), len(grid_2d[0]) if grid_2d else 0
+        arr = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.int64)
+        for y in range(min(h, self.GRID_SIZE)):
+            for x in range(min(w, self.GRID_SIZE)):
+                arr[y, x] = int(grid_2d[y][x]) % self.NUM_COLORS
 
-    def process(self, frame: Any) -> tuple[torch.Tensor, torch.Tensor]:
-        """Convert a raw ARC frame to model-ready tensors.
+        tensor = torch.zeros(self.NUM_COLORS, self.GRID_SIZE, self.GRID_SIZE)
+        indices = torch.from_numpy(arr).long().unsqueeze(0)
+        tensor.scatter_(0, indices, 1.0)
+        return tensor
 
-        Parameters
-        ----------
-        frame:
-            Raw frame object from the arc-agi SDK.
+    def extract_aux_features(self, frame, action_count=0, prev_action=0, max_actions=200) -> torch.Tensor:
+        features = torch.zeros(self.AUX_DIM)
+        levels = getattr(frame, 'levels_completed', 0)
+        win_levels = getattr(frame, 'win_levels', 5)
+        features[0] = levels / max(win_levels, 1)
+        features[1] = win_levels / 255.0
+        features[2] = action_count / max_actions
+        if 0 <= prev_action < 8:
+            features[3 + prev_action] = 1.0
+        state = str(getattr(frame, 'state', 'NOT_FINISHED'))
+        if hasattr(frame.state, 'name'):
+            state = frame.state.name
+        features[11 + self.STATE_MAP.get(state, 1)] = 1.0
+        return features
 
-        Returns
-        -------
-        tuple[torch.Tensor, torch.Tensor]
-            ``(grid_tensor, aux_tensor)`` where ``grid_tensor`` has shape
-            ``(num_colors, grid_size, grid_size)`` and ``aux_tensor`` has shape
-            ``(aux_feature_dim,)``.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("StateProcessor.process is not yet implemented.")
-
-    def grid_to_tensor(self, grid: list[list[int]]) -> torch.Tensor:
-        """One-hot encode a raw 2-D grid into a CHW tensor.
-
-        Parameters
-        ----------
-        grid:
-            2-D list of integer color values.
-
-        Returns
-        -------
-        torch.Tensor
-            Tensor of shape ``(num_colors, grid_size, grid_size)``.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("StateProcessor.grid_to_tensor is not yet implemented.")
-
-    def compute_aux_features(self, frame: Any) -> torch.Tensor:
-        """Extract auxiliary scalar features from the frame.
-
-        Features may include: step count, grid height/width, number of
-        distinct colors present, example pair index, etc.
-
-        Parameters
-        ----------
-        frame:
-            Raw frame from the arc-agi SDK.
-
-        Returns
-        -------
-        torch.Tensor
-            1-D tensor of shape ``(aux_feature_dim,)``.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError(
-            "StateProcessor.compute_aux_features is not yet implemented."
-        )
+    def get_available_actions_mask(self, frame) -> torch.Tensor:
+        mask = torch.zeros(8, dtype=torch.bool)
+        mask[0] = True
+        for a in getattr(frame, 'available_actions', [1, 2, 3, 4, 5]):
+            if 0 <= a < 8:
+                mask[a] = True
+        return mask
