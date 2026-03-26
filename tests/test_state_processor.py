@@ -157,3 +157,48 @@ class TestAvailableActionsMask:
         # only action 0 should be set
         assert mask[0].item() is True
         assert mask[1:].sum().item() == 0
+
+    # --- valid_actions parameter (per-game tag filtering) ---
+
+    def test_valid_actions_click_only(self, processor):
+        """click games: RESET(0), INTERACT(5), COORDINATE(6), UNDO(7) only."""
+        click_actions = [0, 5, 6, 7]
+        mask = processor.get_available_actions_mask(valid_actions=click_actions)
+        expected = [True, False, False, False, False, True, True, True]
+        for i, exp in enumerate(expected):
+            assert mask[i].item() is exp, f"action {i}: expected {exp}, got {mask[i].item()}"
+
+    def test_valid_actions_keyboard_only(self, processor):
+        """keyboard games: RESET(0), UP(1), DOWN(2), LEFT(3), RIGHT(4), UNDO(7) only."""
+        keyboard_actions = [0, 1, 2, 3, 4, 7]
+        mask = processor.get_available_actions_mask(valid_actions=keyboard_actions)
+        expected = [True, True, True, True, True, False, False, True]
+        for i, exp in enumerate(expected):
+            assert mask[i].item() is exp, f"action {i}: expected {exp}, got {mask[i].item()}"
+
+    def test_valid_actions_keyboard_click_all(self, processor):
+        """keyboard_click games: all 8 actions available."""
+        all_actions = [0, 1, 2, 3, 4, 5, 6, 7]
+        mask = processor.get_available_actions_mask(valid_actions=all_actions)
+        assert mask.all().item() is True, "All actions should be enabled for keyboard_click"
+
+    def test_valid_actions_overrides_frame(self, processor):
+        """When valid_actions is given, the frame's available_actions field is ignored."""
+        frame = make_frame(available_actions=[1, 2, 3])
+        click_actions = [0, 5, 6, 7]
+        mask = processor.get_available_actions_mask(frame, valid_actions=click_actions)
+        # keyboard actions 1-4 should be False despite frame saying [1,2,3]
+        assert mask[1].item() is False
+        assert mask[2].item() is False
+        assert mask[5].item() is True
+        assert mask[6].item() is True
+
+    def test_valid_actions_none_falls_back_to_frame(self, processor):
+        """Passing valid_actions=None falls back to frame-level available_actions."""
+        frame = make_frame(available_actions=[1, 3])
+        mask = processor.get_available_actions_mask(frame, valid_actions=None)
+        assert mask[0].item() is True   # always on via frame fallback
+        assert mask[1].item() is True
+        assert mask[3].item() is True
+        assert mask[2].item() is False
+        assert mask[4].item() is False

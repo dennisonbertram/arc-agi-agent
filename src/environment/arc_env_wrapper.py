@@ -27,12 +27,20 @@ class ArcEnvWrapper:
         self.prev_levels = 0
         self.current_frame = None
         self._env = None
+        self.valid_actions = None  # None means use frame's available_actions
 
         if HAS_ARC:
             from arc_agi import Arcade, OperationMode
             modes = {"OFFLINE": OperationMode.OFFLINE, "ONLINE": OperationMode.ONLINE, "NORMAL": OperationMode.NORMAL}
             arc = Arcade(operation_mode=modes.get(mode, OperationMode.OFFLINE), arc_api_key=api_key if api_key is not None else "")
             self._env = arc.make(game_id)
+            # Detect game tag to restrict valid actions
+            game_tags = []
+            for env_info in arc.available_environments:
+                if env_info.game_id == game_id:
+                    game_tags = getattr(env_info, 'tags', [])
+                    break
+            self.valid_actions = self._actions_for_tags(game_tags)
 
     def reset(self) -> dict:
         self.action_count = 0
@@ -80,8 +88,23 @@ class ArcEnvWrapper:
         return {
             "grid": self.processor.frame_to_tensor(frame),
             "aux": self.processor.extract_aux_features(frame, self.action_count, self.prev_action),
-            "available_actions": self.processor.get_available_actions_mask(frame),
+            "available_actions": self.processor.get_available_actions_mask(frame, valid_actions=self.valid_actions),
         }
+
+    @staticmethod
+    def _actions_for_tags(tags: list) -> list[int] | None:
+        """Return the valid action indices for a game based on its tags.
+
+        Returns None when tags are unknown (falls back to frame-level mask).
+        """
+        tag_set = {str(t).lower() for t in tags}
+        if "keyboard_click" in tag_set:
+            return [0, 1, 2, 3, 4, 5, 6, 7]
+        if "click" in tag_set:
+            return [0, 5, 6, 7]
+        if "keyboard" in tag_set:
+            return [0, 1, 2, 3, 4, 7]
+        return None
 
     def _grid(self):
         if not self.current_frame:

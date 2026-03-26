@@ -45,10 +45,14 @@ class SelfImprover:
         improvement_threshold: float = 0.05,
         checkpoint_dir: "str | Path" = "checkpoints",
         log_dir: "str | Path" = "logs",
+        mode: str = "OFFLINE",
+        api_key: str = "",
     ):
         self.trainer = trainer or PPOTrainer()
         self.game_ids = game_ids or ["ls20"]
         self.eval_game_ids = eval_game_ids or self.game_ids[:1]
+        self.mode = mode
+        self.api_key = api_key
         self.max_iterations = max_iterations
         self.train_steps_per_iter = train_steps_per_iter
         self.rollout_steps = rollout_steps
@@ -139,7 +143,7 @@ class SelfImprover:
         """Run training for one iteration across all games."""
         all_stats = []
         for game_id in self.game_ids:
-            env = ArcEnvWrapper(game_id, mode="OFFLINE", max_actions=config.max_actions_per_game)
+            env = ArcEnvWrapper(game_id, mode=self.mode, api_key=self.api_key, max_actions=config.max_actions_per_game)
             for step in range(self.train_steps_per_iter):
                 rollout_stats = self.trainer.collect_rollout(env, self.rollout_steps)
                 update_stats = self.trainer.update()
@@ -158,7 +162,7 @@ class SelfImprover:
         import torch
         rewards = []
         for game_id in self.eval_game_ids:
-            env = ArcEnvWrapper(game_id, mode="OFFLINE", max_actions=config.max_actions_per_game)
+            env = ArcEnvWrapper(game_id, mode=self.mode, api_key=self.api_key, max_actions=config.max_actions_per_game)
             obs = env.reset()
             ep_reward = 0.0
 

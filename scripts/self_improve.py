@@ -4,6 +4,7 @@ import argparse
 import sys
 sys.path.insert(0, ".")
 
+from src.config import config
 from src.training.trainer import PPOTrainer
 from src.training.self_improver import SelfImprover
 
@@ -15,6 +16,8 @@ def main():
     parser.add_argument("--train-steps", type=int, default=20)
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--mode", choices=["OFFLINE", "ONLINE", "NORMAL"], default="OFFLINE",
+                        help="Operation mode: OFFLINE (mock), ONLINE (live API), NORMAL")
     args = parser.parse_args()
 
     trainer = PPOTrainer(device=args.device)
@@ -26,6 +29,8 @@ def main():
         game_ids=args.games,
         max_iterations=args.iterations,
         train_steps_per_iter=args.train_steps,
+        mode=args.mode,
+        api_key=config.arc_api_key,
     )
 
     summary = improver.run()

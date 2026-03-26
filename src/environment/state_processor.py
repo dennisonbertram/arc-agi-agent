@@ -73,7 +73,13 @@ class StateProcessor:
         features[11 + self.STATE_MAP.get(state, 1)] = 1.0
         return features
 
-    def get_available_actions_mask(self, frame) -> torch.Tensor:
+    def get_available_actions_mask(self, frame=None, valid_actions: list[int] | None = None) -> torch.Tensor:
+        if valid_actions is not None:
+            mask = torch.zeros(8, dtype=torch.bool)
+            for a in valid_actions:
+                if 0 <= a < 8:
+                    mask[a] = True
+            return mask
         mask = torch.zeros(8, dtype=torch.bool)
         mask[0] = True
         for a in getattr(frame, 'available_actions', [1, 2, 3, 4, 5]):

@@ -28,7 +28,7 @@ def main():
         trainer.load_checkpoint(args.checkpoint)
         print(f"Resumed from {args.checkpoint}")
 
-    env = ArcEnvWrapper(args.game, mode=args.mode, max_actions=config.max_actions_per_game)
+    env = ArcEnvWrapper(args.game, mode=args.mode, api_key=config.arc_api_key, max_actions=config.max_actions_per_game)
 
     for step in range(args.steps):
         rollout_stats = trainer.collect_rollout(env, args.rollout)
