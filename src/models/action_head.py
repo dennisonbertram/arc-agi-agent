@@ -1,103 +1,70 @@
-"""Action head for decomposed action output."""
-from __future__ import annotations
-
+"""Multi-head action decoder for ARC-AGI-3 hybrid action space."""
 import torch
 import torch.nn as nn
-
-from src.config import config
+from torch.distributions import Categorical
 
 
 class ActionHead(nn.Module):
-    """Output head that produces structured action components.
+    """Decodes embedding into action distribution.
 
-    ARC-AGI-3 actions may require multiple components (e.g. action type,
-    target row, target column, color value). This module decomposes a
-    hidden representation into each component's logits.
-
-    Parameters
-    ----------
-    hidden_dim:
-        Dimensionality of the input representation from the policy MLP.
-    num_actions:
-        Number of high-level discrete action types.
-    grid_size:
-        Grid dimension N, used for spatial (row/col) action components.
-    num_colors:
-        Number of color values for color-selection actions.
+    Handles 8 action types (RESET + ACTION1-7) plus coordinate output for ACTION6.
+    Supports action masking for available_actions.
     """
 
-    def __init__(
-        self,
-        hidden_dim: int | None = None,
-        num_actions: int | None = None,
-        grid_size: int | None = None,
-        num_colors: int | None = None,
-    ) -> None:
+    def __init__(self, input_dim: int = 256, num_actions: int = 8, coord_size: int = 64):
         super().__init__()
-        self.hidden_dim = hidden_dim or config.hidden_dim
-        self.num_actions = num_actions or config.num_actions
-        self.grid_size = grid_size or config.grid_size
-        self.num_colors = num_colors or config.num_colors
+        self.num_actions = num_actions
+        self.coord_size = coord_size
 
-        # Placeholder heads — to be implemented.
-        self.action_type_head: nn.Linear | None = None
-        self.row_head: nn.Linear | None = None
-        self.col_head: nn.Linear | None = None
-        self.color_head: nn.Linear | None = None
+        self.shared = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+        )
+        self.action_head = nn.Linear(256, num_actions)
+        self.x_head = nn.Linear(256, coord_size)
+        self.y_head = nn.Linear(256, coord_size)
 
-    def build(self) -> "ActionHead":
-        """Construct the output linear layers.
+    def forward(self, embedding: torch.Tensor, available_actions: torch.Tensor | None = None):
+        h = self.shared(embedding)
+        action_logits = self.action_head(h)
+        x_logits = self.x_head(h)
+        y_logits = self.y_head(h)
 
-        Returns
-        -------
-        ActionHead
-            Self, for chaining.
+        if available_actions is not None:
+            action_logits = action_logits.masked_fill(~available_actions, float('-inf'))
 
-        Raises
-        ------
-        NotImplementedError
-            Until layer definitions are filled in.
-        """
-        raise NotImplementedError("ActionHead.build is not yet implemented.")
+        return action_logits, x_logits, y_logits
 
-    def forward(self, hidden: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Compute logits for each action component.
+    def sample(self, embedding: torch.Tensor, available_actions: torch.Tensor | None = None):
+        action_logits, x_logits, y_logits = self.forward(embedding, available_actions)
 
-        Parameters
-        ----------
-        hidden:
-            Tensor of shape ``(B, hidden_dim)`` from the policy MLP.
+        action_dist = Categorical(logits=action_logits)
+        x_dist = Categorical(logits=x_logits)
+        y_dist = Categorical(logits=y_logits)
 
-        Returns
-        -------
-        dict[str, torch.Tensor]
-            Dictionary with keys ``"action_type"``, ``"row"``, ``"col"``,
-            ``"color"`` mapping to logit tensors of appropriate shapes.
+        action = action_dist.sample()
+        x = x_dist.sample()
+        y = y_dist.sample()
 
-        Raises
-        ------
-        NotImplementedError
-            Until the forward pass is implemented.
-        """
-        raise NotImplementedError("ActionHead.forward is not yet implemented.")
+        log_prob = action_dist.log_prob(action)
+        is_a6 = (action == 6).float()
+        log_prob = log_prob + is_a6 * (x_dist.log_prob(x) + y_dist.log_prob(y))
+        entropy = action_dist.entropy() + is_a6 * (x_dist.entropy() + y_dist.entropy())
 
-    def sample(self, hidden: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Sample one action per batch element from the action distributions.
+        return action, x, y, log_prob, entropy
 
-        Parameters
-        ----------
-        hidden:
-            Tensor of shape ``(B, hidden_dim)``.
+    def log_prob(self, embedding: torch.Tensor, action_type: torch.Tensor,
+                 x: torch.Tensor, y: torch.Tensor,
+                 available_actions: torch.Tensor | None = None):
+        action_logits, x_logits, y_logits = self.forward(embedding, available_actions)
 
-        Returns
-        -------
-        dict[str, torch.Tensor]
-            Dictionary with sampled integer tensors for each component plus
-            ``"log_prob"`` containing the joint log-probability.
+        action_dist = Categorical(logits=action_logits)
+        x_dist = Categorical(logits=x_logits)
+        y_dist = Categorical(logits=y_logits)
 
-        Raises
-        ------
-        NotImplementedError
-            Until the forward pass is implemented.
-        """
-        raise NotImplementedError("ActionHead.sample is not yet implemented.")
+        lp = action_dist.log_prob(action_type)
+        is_a6 = (action_type == 6).float()
+        lp = lp + is_a6 * (x_dist.log_prob(x) + y_dist.log_prob(y))
+        entropy = action_dist.entropy() + is_a6 * (x_dist.entropy() + y_dist.entropy())
+
+        return lp, entropy

@@ -1,113 +1,31 @@
-"""Policy network (actor) for PPO."""
-from __future__ import annotations
-
+"""Policy network: grid + features -> action distribution."""
 import torch
 import torch.nn as nn
-
-from src.config import config
+from src.models.encoder import GridEncoder
+from src.models.action_head import ActionHead
 
 
 class PolicyNetwork(nn.Module):
-    """Actor network that maps state embeddings to action logits.
+    AUX_DIM = 15
 
-    Takes the output of :class:`src.models.encoder.GridEncoder` plus optional
-    auxiliary features and produces a probability distribution over actions.
-
-    Parameters
-    ----------
-    embedding_dim:
-        Dimensionality of the encoded state vector.
-    hidden_dim:
-        Width of the hidden MLP layers.
-    num_actions:
-        Number of discrete actions in the action space.
-    aux_feature_dim:
-        Dimensionality of auxiliary (non-visual) features concatenated with
-        the grid embedding before the MLP.
-    """
-
-    def __init__(
-        self,
-        embedding_dim: int | None = None,
-        hidden_dim: int | None = None,
-        num_actions: int | None = None,
-        aux_feature_dim: int | None = None,
-    ) -> None:
+    def __init__(self, num_colors: int = 16, embedding_dim: int = 256, hidden_dim: int = 512):
         super().__init__()
-        self.embedding_dim = embedding_dim or config.embedding_dim
-        self.hidden_dim = hidden_dim or config.hidden_dim
-        self.num_actions = num_actions or config.num_actions
-        self.aux_feature_dim = aux_feature_dim or config.aux_feature_dim
-
-        # Placeholder — to be implemented.
-        self.mlp: nn.Sequential | None = None
-        self.action_head: nn.Linear | None = None
-
-    def build(self) -> "PolicyNetwork":
-        """Construct MLP layers.
-
-        Returns
-        -------
-        PolicyNetwork
-            Self, for chaining.
-
-        Raises
-        ------
-        NotImplementedError
-            Until layer definitions are filled in.
-        """
-        raise NotImplementedError("PolicyNetwork.build is not yet implemented.")
-
-    def forward(
-        self,
-        state_embedding: torch.Tensor,
-        aux_features: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Compute action logits for a batch of state embeddings.
-
-        Parameters
-        ----------
-        state_embedding:
-            Tensor of shape ``(B, embedding_dim)``.
-        aux_features:
-            Optional tensor of shape ``(B, aux_feature_dim)`` containing
-            non-visual features (e.g. step count, previous action).
-
-        Returns
-        -------
-        torch.Tensor
-            Logit tensor of shape ``(B, num_actions)``.
-
-        Raises
-        ------
-        NotImplementedError
-            Until the forward pass is implemented.
-        """
-        raise NotImplementedError("PolicyNetwork.forward is not yet implemented.")
-
-    def get_action_distribution(
-        self,
-        state_embedding: torch.Tensor,
-        aux_features: torch.Tensor | None = None,
-    ) -> torch.distributions.Categorical:
-        """Return a Categorical distribution over actions.
-
-        Parameters
-        ----------
-        state_embedding:
-            Tensor of shape ``(B, embedding_dim)``.
-        aux_features:
-            Optional auxiliary feature tensor.
-
-        Returns
-        -------
-        torch.distributions.Categorical
-
-        Raises
-        ------
-        NotImplementedError
-            Until the forward pass is implemented.
-        """
-        raise NotImplementedError(
-            "PolicyNetwork.get_action_distribution is not yet implemented."
+        self.encoder = GridEncoder(num_colors, embedding_dim)
+        self.aux_fc = nn.Sequential(nn.Linear(self.AUX_DIM, 64), nn.ReLU())
+        self.combined = nn.Sequential(
+            nn.Linear(embedding_dim + 64, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, embedding_dim), nn.ReLU(),
         )
+        self.action_head = ActionHead(embedding_dim)
+
+    def _encode(self, grid: torch.Tensor, aux: torch.Tensor) -> torch.Tensor:
+        return self.combined(torch.cat([self.encoder(grid), self.aux_fc(aux)], dim=-1))
+
+    def forward(self, grid, aux, available_actions=None):
+        return self.action_head(self._encode(grid, aux), available_actions)
+
+    def sample(self, grid, aux, available_actions=None):
+        return self.action_head.sample(self._encode(grid, aux), available_actions)
+
+    def evaluate(self, grid, aux, action_type, x, y, available_actions=None):
+        return self.action_head.log_prob(self._encode(grid, aux), action_type, x, y, available_actions)
