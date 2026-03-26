@@ -1,4 +1,5 @@
 """RL-friendly wrapper around arc-agi SDK."""
+import time
 import numpy as np
 from typing import Optional
 from src.environment.state_processor import StateProcessor, MockFrame
@@ -48,6 +49,7 @@ class ArcEnvWrapper:
         self.prev_grid = None
         self.prev_levels = 0
         if self._env:
+            time.sleep(0.05)  # base delay to stay under 600 RPM
             self.current_frame = self._env.reset()
         else:
             self.current_frame = MockFrame(frame=[[[0]*64 for _ in range(64)]])
@@ -56,16 +58,48 @@ class ArcEnvWrapper:
     def step(self, action_type: int, x: int = 0, y: int = 0):
         self.prev_grid = self._grid()
         self.prev_levels = getattr(self.current_frame, 'levels_completed', 0)
+        step_error_done = False
 
         if self._env and HAS_ARC:
+            import logging
             action = self._to_game_action(action_type, x, y)
             data = {"x": x, "y": y} if action_type == 6 else None
-            try:
-                self.current_frame = self._env.step(action, data=data)
-            except Exception as e:
-                import logging
-                logging.warning(f"Step error for action {action_type} ({action}): {e}. Keeping previous frame.")
-                # current_frame is unchanged; count action and continue
+            max_retries = 3
+            backoff = 1.0
+            time.sleep(0.05)  # base delay to stay under 600 RPM
+            for attempt in range(max_retries + 1):
+                try:
+                    self.current_frame = self._env.step(action, data=data)
+                    break  # success
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str and attempt < max_retries:
+                        sleep_time = min(backoff * (2 ** attempt), 10.0)
+                        logging.warning(
+                            f"Step 429 rate-limited for action {action_type} ({action}), "
+                            f"attempt {attempt + 1}/{max_retries}. Sleeping {sleep_time:.1f}s."
+                        )
+                        time.sleep(sleep_time)
+                        continue
+                    # Non-retryable error or retries exhausted
+                    if "400" in err_str:
+                        logging.warning(
+                            f"Step 400 error for action {action_type} ({action}): game session ended. "
+                            f"Marking episode done."
+                        )
+                        step_error_done = True
+                    elif "429" in err_str:
+                        logging.warning(
+                            f"Step 429 max retries exhausted for action {action_type} ({action}). "
+                            f"Marking episode done."
+                        )
+                        step_error_done = True
+                    else:
+                        logging.warning(
+                            f"Step error for action {action_type} ({action}): {e}. Keeping previous frame."
+                        )
+                    break
+            # current_frame is unchanged on error; count action and continue
         else:
             grid = [[np.random.randint(0, 16) for _ in range(64)] for _ in range(64)]
             self.current_frame = MockFrame(frame=[grid])
@@ -76,8 +110,9 @@ class ArcEnvWrapper:
 
         reward = self.reward_shaper.compute_reward(
             self.prev_grid, self._grid(), state, action_type, self.prev_levels, curr_levels)
-        done = "WIN" in state or self.action_count >= self.max_actions
-        info = {"action_count": self.action_count, "levels_completed": curr_levels, "state": state}
+        done = step_error_done or "WIN" in state or self.action_count >= self.max_actions
+        info = {"action_count": self.action_count, "levels_completed": curr_levels, "state": state,
+                "step_error": step_error_done}
         self.prev_action = action_type
         return self._obs(), reward, done, info
 

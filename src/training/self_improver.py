@@ -41,7 +41,7 @@ class SelfImprover:
         eval_game_ids: Optional[list] = None,
         max_iterations: int = 10,
         train_steps_per_iter: int = 20,
-        rollout_steps: int = 200,
+        rollout_steps: int = 50,
         improvement_threshold: float = 0.05,
         checkpoint_dir: "str | Path" = "checkpoints",
         log_dir: "str | Path" = "logs",
