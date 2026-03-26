@@ -1,110 +1,22 @@
-"""Structured logging utilities for ARC-AGI-3 RL agent."""
-from __future__ import annotations
-
-import logging
+"""Structured logging for training."""
+import json
+import time
 from pathlib import Path
-from typing import Any
 
 
-def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
-    """Return a named logger with a standard console handler.
+class TrainingLogger:
+    def __init__(self, log_dir: "str | Path" = "logs"):
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_file = self.log_dir / "training.jsonl"
 
-    Parameters
-    ----------
-    name:
-        Logger name (typically ``__name__`` of the calling module).
-    level:
-        Logging level (e.g. ``logging.DEBUG``, ``logging.INFO``).
+    def log(self, data: dict):
+        data["timestamp"] = time.time()
+        with open(self.log_file, "a") as f:
+            f.write(json.dumps(data, default=str) + "\n")
 
-    Returns
-    -------
-    logging.Logger
-    """
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
-        )
-        logger.addHandler(handler)
-    logger.setLevel(level)
-    return logger
+    def log_episode(self, episode: int, reward: float, length: int, **kwargs):
+        self.log({"type": "episode", "episode": episode, "reward": reward, "length": length, **kwargs})
 
-
-class TBLogger:
-    """Thin wrapper around TensorBoard SummaryWriter with lazy initialization.
-
-    Parameters
-    ----------
-    log_dir:
-        Directory where TensorBoard event files will be written.
-    enabled:
-        Set to ``False`` to disable logging (e.g. during testing).
-    """
-
-    def __init__(self, log_dir: Path | str | None = None, enabled: bool = True) -> None:
-        self.log_dir = Path(log_dir) if log_dir else Path("logs")
-        self.enabled = enabled
-        self._writer: Any = None
-
-    def _get_writer(self) -> Any:
-        """Lazily initialize the TensorBoard SummaryWriter.
-
-        Returns
-        -------
-        torch.utils.tensorboard.SummaryWriter
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("TBLogger._get_writer is not yet implemented.")
-
-    def log_scalar(self, tag: str, value: float, step: int) -> None:
-        """Write a scalar metric to TensorBoard.
-
-        Parameters
-        ----------
-        tag:
-            Metric name (e.g. ``"train/policy_loss"``).
-        value:
-            Scalar value.
-        step:
-            Global training step.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("TBLogger.log_scalar is not yet implemented.")
-
-    def log_dict(self, metrics: dict[str, float], step: int, prefix: str = "") -> None:
-        """Write multiple scalars to TensorBoard.
-
-        Parameters
-        ----------
-        metrics:
-            Dict of tag → value pairs.
-        step:
-            Global training step.
-        prefix:
-            Optional prefix prepended to each tag (e.g. ``"train/"``).
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("TBLogger.log_dict is not yet implemented.")
-
-    def close(self) -> None:
-        """Flush and close the TensorBoard writer.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("TBLogger.close is not yet implemented.")
+    def log_update(self, step: int, **kwargs):
+        self.log({"type": "update", "step": step, **kwargs})

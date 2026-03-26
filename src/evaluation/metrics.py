@@ -1,106 +1,29 @@
-"""Metrics tracking for ARC-AGI-3 evaluation."""
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Any
+"""ARC-AGI-3 scoring metrics."""
 
 
-@dataclass
-class EpisodeResult:
-    """Result record for a single evaluation episode.
+def compute_rhae(ai_actions: int, human_baseline: int) -> float:
+    """Compute Relative Human Action Efficiency.
 
-    Attributes
-    ----------
-    task_id:
-        Identifier of the evaluated task.
-    solved:
-        Whether the agent produced the correct output grid.
-    total_reward:
-        Cumulative reward over the episode.
-    steps:
-        Number of actions taken.
-    pixel_accuracy:
-        Fraction of output pixels that match the target (0.0 – 1.0).
-    info:
-        Optional extra data from the environment.
+    RHAE = (human_baseline / ai_actions)^2, capped at 1.0
     """
-
-    task_id: str
-    solved: bool
-    total_reward: float
-    steps: int
-    pixel_accuracy: float = 0.0
-    info: dict[str, Any] = field(default_factory=dict)
+    if ai_actions <= 0:
+        return 0.0
+    score = (human_baseline / ai_actions) ** 2
+    return min(score, 1.0)
 
 
-class MetricsTracker:
-    """Accumulates and summarises evaluation results across episodes.
+def compute_game_score(level_scores: list) -> float:
+    """Compute weighted game score.
 
-    Parameters
-    ----------
-    window_size:
-        Number of recent episodes to include in rolling-average statistics.
+    Later levels weighted more: weight = level_number
     """
+    if not level_scores:
+        return 0.0
+    weighted_sum = sum(score * (i + 1) for i, score in enumerate(level_scores))
+    weight_total = sum(i + 1 for i in range(len(level_scores)))
+    return weighted_sum / weight_total
 
-    def __init__(self, window_size: int = 100) -> None:
-        self.window_size = window_size
-        self._results: list[EpisodeResult] = []
 
-    def record(self, result: EpisodeResult) -> None:
-        """Add an episode result to the tracker.
-
-        Parameters
-        ----------
-        result:
-            The :class:`EpisodeResult` to record.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("MetricsTracker.record is not yet implemented.")
-
-    def summary(self) -> dict[str, float]:
-        """Return aggregated statistics over all recorded results.
-
-        Returns
-        -------
-        dict[str, float]
-            Keys: ``"solve_rate"``, ``"mean_reward"``,
-            ``"mean_pixel_accuracy"``, ``"mean_steps"``,
-            ``"rolling_solve_rate"`` (last ``window_size`` episodes).
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("MetricsTracker.summary is not yet implemented.")
-
-    def rolling_summary(self) -> dict[str, float]:
-        """Return statistics over the most recent ``window_size`` episodes.
-
-        Returns
-        -------
-        dict[str, float]
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("MetricsTracker.rolling_summary is not yet implemented.")
-
-    def reset(self) -> None:
-        """Clear all recorded results.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("MetricsTracker.reset is not yet implemented.")
-
-    def __len__(self) -> int:
-        return len(self._results)
+def compute_overall_score(game_scores: list) -> float:
+    """Average of game scores."""
+    return sum(game_scores) / len(game_scores) if game_scores else 0.0

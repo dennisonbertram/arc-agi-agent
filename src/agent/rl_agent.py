@@ -1,160 +1,101 @@
-"""PPO-based reinforcement learning agent for ARC-AGI-3."""
-from __future__ import annotations
-
-from typing import Any
-
+"""RL Agent that uses trained policy/value networks."""
 import torch
+from pathlib import Path
+from typing import Optional
 
 from src.agent.base_agent import BaseAgent
-from src.config import config
-
-# Guard import — arc-agi SDK may not be present during scaffolding.
-try:
-    from arcengine import Action, Frame  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover
-    Action = Any  # type: ignore[assignment,misc]
-    Frame = Any  # type: ignore[assignment,misc]
+from src.models.policy_net import PolicyNetwork
+from src.models.value_net import ValueNetwork
+from src.environment.state_processor import StateProcessor
 
 
 class RLAgent(BaseAgent):
-    """PPO-based RL agent for ARC-AGI-3.
+    """Agent that uses trained neural networks for action selection.
 
-    This agent uses a CNN encoder to process grid observations and a
-    policy network to select actions. It is designed to be trained via
-    :class:`src.training.trainer.PPOTrainer`.
-
-    Parameters
-    ----------
-    policy_net:
-        The policy network (actor). Expected to accept an encoded state
-        tensor and return action logits.
-    value_net:
-        The value network (critic). Expected to accept an encoded state
-        tensor and return a scalar value estimate.
-    encoder:
-        The grid encoder that converts raw ARC frames into tensors.
-    device:
-        Torch device to run inference on.
-    max_steps:
-        Maximum steps per episode before self-terminating.
+    Can be used with the ARC-AGI-3 agent framework.
     """
 
-    def __init__(
-        self,
-        policy_net: Any = None,
-        value_net: Any = None,
-        encoder: Any = None,
-        device: torch.device | str = "cpu",
-        max_steps: int | None = None,
-    ) -> None:
+    MAX_ACTIONS = 200
+
+    def __init__(self, game_id: str, checkpoint_path: "Optional[str | Path]" = None,
+                 device: str = "cpu", **kwargs):
         super().__init__()
-        self.policy_net = policy_net
-        self.value_net = value_net
-        self.encoder = encoder
+        self.game_id = game_id
         self.device = torch.device(device)
-        self.max_steps: int = max_steps if max_steps is not None else config.max_actions_per_game
+        self.processor = StateProcessor()
+        self.policy = PolicyNetwork().to(self.device)
+        self.policy.eval()
+        self.action_count = 0
+        self._prev_action = 0
 
-        # Per-episode trajectory storage (populated during rollout).
-        self._trajectory: list[dict[str, Any]] = []
-        self._last_frame: Frame | None = None
+        if checkpoint_path:
+            self.load_checkpoint(checkpoint_path)
 
-    # ------------------------------------------------------------------
-    # BaseAgent interface
-    # ------------------------------------------------------------------
+    def load_checkpoint(self, path: "str | Path"):
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        if "policy_state_dict" in ckpt:
+            self.policy.load_state_dict(ckpt["policy_state_dict"])
+        else:
+            self.policy.load_state_dict(ckpt)
+        self.policy.eval()
 
-    def choose_action(self, frame: Frame) -> Action:
+    def is_done(self, frames=None, latest_frame=None) -> bool:
+        # Support both call signatures: is_done() from BaseAgent and
+        # is_done(frames, latest_frame) used by ArcEnvWrapper/scripts.
+        if latest_frame is not None:
+            state = getattr(latest_frame, 'state', None)
+            if state is None:
+                return self.action_count >= self.MAX_ACTIONS
+            state_str = str(state)
+            if hasattr(state, 'name'):
+                state_str = state.name
+            return "WIN" in state_str or self.action_count >= self.MAX_ACTIONS
+        return self._done or self.action_count >= self.MAX_ACTIONS
+
+    def choose_action(self, frame):
         """Select an action using the current policy.
 
-        Parameters
-        ----------
-        frame:
-            Current game observation.
-
-        Returns
-        -------
-        Action
-            The chosen action, selected by sampling from the policy distribution.
-
-        Raises
-        ------
-        NotImplementedError
-            Until the policy network and encoder are implemented.
+        Accepts either a raw frame object (for BaseAgent compatibility) or
+        pre-processed tensors via keyword arguments.
         """
-        raise NotImplementedError(
-            "RLAgent.choose_action requires policy_net and encoder to be implemented. "
-            "See src/models/encoder.py and src/models/policy_net.py."
-        )
+        grid = self.processor.frame_to_tensor(frame).unsqueeze(0).to(self.device)
+        aux = self.processor.extract_aux_features(
+            frame, self.action_count, self._prev_action
+        ).unsqueeze(0).to(self.device)
+        mask = self.processor.get_available_actions_mask(frame).unsqueeze(0).to(self.device)
 
-    def on_frame(self, frame: Frame) -> None:
-        """Store the latest frame and increment step counter.
+        with torch.no_grad():
+            action, x, y, _, _ = self.policy.sample(grid, aux, mask)
 
-        Parameters
-        ----------
-        frame:
-            The latest observation from the environment.
-        """
-        super().on_frame(frame)
-        self._last_frame = frame
-        if self._step >= self.max_steps:
-            self._done = True
+        self.action_count += 1
+        action_int = action.item()
+        self._prev_action = action_int
 
-    def on_episode_end(self, reward: float, info: dict[str, Any] | None = None) -> None:
-        """Finalize the trajectory and reset for the next episode.
+        # Convert to GameAction format
+        try:
+            from arcengine import GameAction
+            action_map = {
+                0: GameAction.RESET, 1: GameAction.ACTION1, 2: GameAction.ACTION2,
+                3: GameAction.ACTION3, 4: GameAction.ACTION4, 5: GameAction.ACTION5,
+                6: GameAction.ACTION6, 7: GameAction.ACTION7,
+            }
+            ga = action_map.get(action_int, GameAction.ACTION1)
+            if action_int == 6:
+                ga.set_data({"x": x.item(), "y": y.item()})
+            ga.reasoning = f"RL policy action {action_int}"
+            return ga
+        except ImportError:
+            return action_int
 
-        Parameters
-        ----------
-        reward:
-            Total or final reward for the completed episode.
-        info:
-            Optional extra info dict from the environment.
-        """
+    def on_episode_end(self, reward: float, info=None) -> None:
         super().on_episode_end(reward, info)
-        self._trajectory = []
-        self._last_frame = None
+        self.action_count = 0
+        self._prev_action = 0
 
-    # ------------------------------------------------------------------
-    # Training helpers
-    # ------------------------------------------------------------------
+    @property
+    def prev_action(self):
+        return self._prev_action
 
-    def get_trajectory(self) -> list[dict[str, Any]]:
-        """Return the trajectory collected during the current episode.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            List of step dicts containing state, action, log_prob, value,
-            reward, and done flag.
-        """
-        raise NotImplementedError(
-            "RLAgent.get_trajectory is not yet implemented."
-        )
-
-    def load_checkpoint(self, path: str) -> None:
-        """Load model weights from a checkpoint file.
-
-        Parameters
-        ----------
-        path:
-            Path to the ``.pt`` checkpoint file.
-
-        Raises
-        ------
-        NotImplementedError
-            Until model classes are implemented.
-        """
-        raise NotImplementedError("RLAgent.load_checkpoint is not yet implemented.")
-
-    def save_checkpoint(self, path: str) -> None:
-        """Save model weights to a checkpoint file.
-
-        Parameters
-        ----------
-        path:
-            Destination path for the ``.pt`` checkpoint file.
-
-        Raises
-        ------
-        NotImplementedError
-            Until model classes are implemented.
-        """
-        raise NotImplementedError("RLAgent.save_checkpoint is not yet implemented.")
+    @prev_action.setter
+    def prev_action(self, value):
+        self._prev_action = value

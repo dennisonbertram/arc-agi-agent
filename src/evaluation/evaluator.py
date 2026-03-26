@@ -1,108 +1,68 @@
-"""Evaluation harness for ARC-AGI-3 RL agent."""
-from __future__ import annotations
-
+"""Evaluate agent performance on ARC-AGI-3 games."""
+import time
+import torch
+import numpy as np
+from typing import Optional
 from pathlib import Path
-from typing import Any
 
-from src.config import config
+from src.agent.rl_agent import RLAgent
+from src.environment.arc_env_wrapper import ArcEnvWrapper
+from src.evaluation.metrics import compute_rhae
 
 
 class Evaluator:
-    """Runs the agent on evaluation tasks and aggregates performance metrics.
+    """Evaluates an agent across multiple games."""
 
-    Separates evaluation from training to give an unbiased performance
-    estimate. Supports both OFFLINE (local tasks) and ONLINE (API) modes.
-
-    Parameters
-    ----------
-    agent:
-        The agent to evaluate.
-    env:
-        The environment to evaluate in.
-    metrics_tracker:
-        An optional :class:`src.evaluation.metrics.MetricsTracker` instance
-        for recording results.
-    num_games:
-        Default number of evaluation games to play.
-    recording_dir:
-        Directory to save game recordings (optional).
-    """
-
-    def __init__(
-        self,
-        agent: Any = None,
-        env: Any = None,
-        metrics_tracker: Any = None,
-        num_games: int | None = None,
-        recording_dir: Path | None = None,
-    ) -> None:
+    def __init__(self, agent: Optional[RLAgent] = None, game_ids: Optional[list] = None,
+                 mode: str = "OFFLINE", max_actions: int = 200):
         self.agent = agent
-        self.env = env
-        self.metrics_tracker = metrics_tracker
-        self.num_games = num_games if num_games is not None else config.eval_games
-        self.recording_dir = recording_dir or config.recording_dir
+        self.game_ids = game_ids or ["ls20"]
+        self.mode = mode
+        self.max_actions = max_actions
 
-    def evaluate(self, num_games: int | None = None) -> dict[str, float]:
-        """Run evaluation episodes and return aggregated metrics.
+    def evaluate(self) -> dict:
+        """Run full evaluation."""
+        results = []
+        for game_id in self.game_ids:
+            result = self.evaluate_game(game_id)
+            results.append(result)
+            print(f"  {game_id}: reward={result['total_reward']:.2f}, "
+                  f"actions={result['actions']}, state={result['final_state']}")
 
-        Parameters
-        ----------
-        num_games:
-            Override the default number of evaluation games.
+        return {
+            "games": results,
+            "mean_reward": np.mean([r["total_reward"] for r in results]),
+            "mean_actions": np.mean([r["actions"] for r in results]),
+            "wins": sum(1 for r in results if "WIN" in str(r.get("final_state", ""))),
+            "num_games": len(results),
+        }
 
-        Returns
-        -------
-        dict[str, float]
-            Metrics dict with keys such as ``"solve_rate"``,
-            ``"mean_reward"``, ``"mean_pixel_accuracy"``.
+    def evaluate_game(self, game_id: str) -> dict:
+        env = ArcEnvWrapper(game_id, mode=self.mode, max_actions=self.max_actions)
+        obs = env.reset()
+        total_reward = 0.0
+        actions = 0
+        info = {"state": "UNKNOWN", "levels_completed": 0}
 
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("Evaluator.evaluate is not yet implemented.")
+        for _ in range(self.max_actions):
+            grid = obs["grid"].unsqueeze(0)
+            aux = obs["aux"].unsqueeze(0)
+            mask = obs["available_actions"].unsqueeze(0)
 
-    def evaluate_single(self, task_id: str) -> dict[str, Any]:
-        """Evaluate the agent on a single specific task.
+            with torch.no_grad():
+                action, x, y, _, _ = self.agent.policy.sample(grid, aux, mask)
 
-        Parameters
-        ----------
-        task_id:
-            The ARC task identifier.
+            obs, reward, done, info = env.step(action.item(), x.item(), y.item())
+            total_reward += reward
+            actions += 1
 
-        Returns
-        -------
-        dict[str, Any]
-            Per-game result including reward, solve status, trajectory length,
-            and pixel accuracy.
+            if done:
+                break
 
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("Evaluator.evaluate_single is not yet implemented.")
-
-    def record_game(self, task_id: str, output_path: Path | None = None) -> Path:
-        """Play and record a game to disk for later review.
-
-        Parameters
-        ----------
-        task_id:
-            Task to play.
-        output_path:
-            Destination file. Defaults to
-            ``recording_dir/<task_id>_<timestamp>.json``.
-
-        Returns
-        -------
-        Path
-            Path to the saved recording.
-
-        Raises
-        ------
-        NotImplementedError
-            Until implemented.
-        """
-        raise NotImplementedError("Evaluator.record_game is not yet implemented.")
+        return {
+            "game_id": game_id,
+            "total_reward": total_reward,
+            "actions": actions,
+            "final_state": info.get("state", "UNKNOWN"),
+            "levels_completed": info.get("levels_completed", 0),
+        }

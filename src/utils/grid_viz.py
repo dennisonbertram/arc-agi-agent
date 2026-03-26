@@ -1,115 +1,31 @@
-"""Grid visualization utilities for ARC-AGI-3."""
-from __future__ import annotations
+"""Grid visualization utilities."""
+import numpy as np
 
-from pathlib import Path
-from typing import Any
+COLORS = [
+    "\u2b1c", "\u1f532", "\U0001f7eb", "\U0001f7e7", "\u2b1b", "\u1f533",
+    "\U0001f7ea", "\U0001f7e3", "\U0001f7e5", "\U0001f7e6", "\U0001f499",
+    "\U0001f7e8", "\U0001f7e0", "\U0001f534", "\U0001f7e9", "\U0001f49c",
+]
 
-
-# ARC color palette (index → RGB tuple).
-ARC_COLORS: dict[int, tuple[int, int, int]] = {
-    0: (0, 0, 0),        # black
-    1: (0, 116, 217),    # blue
-    2: (255, 65, 54),    # red
-    3: (46, 204, 64),    # green
-    4: (255, 220, 0),    # yellow
-    5: (170, 170, 170),  # grey
-    6: (240, 18, 190),   # fuchsia
-    7: (255, 133, 27),   # orange
-    8: (127, 219, 255),  # azure
-    9: (135, 12, 37),    # maroon
-}
+# Fallback ASCII color codes for terminals without emoji support
+ASCII_COLORS = list("0123456789ABCDEF")
 
 
-def render_grid(
-    grid: list[list[int]],
-    cell_size: int = 40,
-    title: str | None = None,
-    show: bool = False,
-    save_path: Path | None = None,
-) -> Any:
-    """Render an ARC grid as a colour image using matplotlib.
-
-    Parameters
-    ----------
-    grid:
-        2-D list of integer color values.
-    cell_size:
-        Pixel size of each cell in the rendered image.
-    title:
-        Optional title displayed above the grid.
-    show:
-        If ``True``, display the figure interactively.
-    save_path:
-        If provided, save the figure to this path.
-
-    Returns
-    -------
-    Any
-        The matplotlib ``Figure`` object.
-
-    Raises
-    ------
-    NotImplementedError
-        Until implemented.
-    """
-    raise NotImplementedError("render_grid is not yet implemented.")
+def grid_to_ascii(grid, max_size: int = 20) -> str:
+    """Convert grid to colored ASCII representation."""
+    if isinstance(grid, list):
+        grid = np.array(grid)
+    h, w = grid.shape[:2]
+    h, w = min(h, max_size), min(w, max_size)
+    lines = []
+    for y in range(h):
+        line = ""
+        for x in range(w):
+            val = int(grid[y, x]) % 16
+            line += ASCII_COLORS[val]
+        lines.append(line)
+    return "\n".join(lines)
 
 
-def render_pair(
-    input_grid: list[list[int]],
-    output_grid: list[list[int]],
-    predicted_grid: list[list[int]] | None = None,
-    title: str | None = None,
-    show: bool = False,
-    save_path: Path | None = None,
-) -> Any:
-    """Render an input/output pair side-by-side, with optional prediction.
-
-    Parameters
-    ----------
-    input_grid:
-        The task input grid.
-    output_grid:
-        The ground-truth output grid.
-    predicted_grid:
-        Optional agent prediction to show as a third panel.
-    title:
-        Overall figure title.
-    show:
-        If ``True``, display the figure interactively.
-    save_path:
-        If provided, save the figure to this path.
-
-    Returns
-    -------
-    Any
-        The matplotlib ``Figure`` object.
-
-    Raises
-    ------
-    NotImplementedError
-        Until implemented.
-    """
-    raise NotImplementedError("render_pair is not yet implemented.")
-
-
-def grid_to_image(grid: list[list[int]], cell_size: int = 40) -> Any:
-    """Convert an ARC grid to a PIL Image.
-
-    Parameters
-    ----------
-    grid:
-        2-D list of integer color values.
-    cell_size:
-        Pixel size of each cell.
-
-    Returns
-    -------
-    PIL.Image.Image
-
-    Raises
-    ------
-    NotImplementedError
-        Until implemented.
-    """
-    raise NotImplementedError("grid_to_image is not yet implemented.")
+def print_grid(grid, max_size: int = 20):
+    print(grid_to_ascii(grid, max_size))
