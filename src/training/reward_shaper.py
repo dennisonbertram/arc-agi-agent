@@ -5,7 +5,7 @@ import numpy as np
 class RewardShaper:
     def __init__(self, win_reward=10.0, game_over_penalty=-5.0, level_bonus=2.0,
                  step_cost=-0.01, undo_penalty=-0.05, reset_penalty=-0.1,
-                 grid_change_bonus=0.02, no_change_penalty=-0.005):
+                 grid_change_bonus=0.2, no_change_penalty=-0.005):
         self.win_reward = win_reward
         self.game_over_penalty = game_over_penalty
         self.level_bonus = level_bonus
