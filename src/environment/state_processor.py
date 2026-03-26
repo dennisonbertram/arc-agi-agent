@@ -25,19 +25,33 @@ class StateProcessor:
     def frame_to_tensor(self, frame) -> torch.Tensor:
         """Convert frame grid to one-hot [16, 64, 64]."""
         raw = frame.frame
-        if isinstance(raw, list) and len(raw) > 0:
-            if isinstance(raw[0], list) and len(raw[0]) > 0 and isinstance(raw[0][0], list):
-                grid_2d = raw[0]
-            else:
-                grid_2d = raw
-        else:
-            grid_2d = [[0] * self.GRID_SIZE for _ in range(self.GRID_SIZE)]
-
-        h, w = len(grid_2d), len(grid_2d[0]) if grid_2d else 0
         arr = np.zeros((self.GRID_SIZE, self.GRID_SIZE), dtype=np.int64)
-        for y in range(min(h, self.GRID_SIZE)):
-            for x in range(min(w, self.GRID_SIZE)):
-                arr[y, x] = int(grid_2d[y][x]) % self.NUM_COLORS
+
+        if isinstance(raw, np.ndarray):
+            # Raw frame is already a numpy array (e.g. shape [64, 64])
+            grid_np = raw if raw.ndim == 2 else raw[0]
+            h, w = grid_np.shape
+            h, w = min(h, self.GRID_SIZE), min(w, self.GRID_SIZE)
+            arr[:h, :w] = grid_np[:h, :w].astype(np.int64) % self.NUM_COLORS
+        elif isinstance(raw, list) and len(raw) > 0:
+            last = raw[-1]
+            if isinstance(last, np.ndarray):
+                # frame.frame is a list of animation frames; use last (final post-action state)
+                grid_np = last
+                h, w = grid_np.shape
+                h, w = min(h, self.GRID_SIZE), min(w, self.GRID_SIZE)
+                arr[:h, :w] = grid_np[:h, :w].astype(np.int64) % self.NUM_COLORS
+            else:
+                # Nested Python lists: [[row, ...], ...]
+                if isinstance(last, list) and last and isinstance(last[0], list):
+                    grid_2d = last
+                else:
+                    grid_2d = raw
+                h, w = len(grid_2d), len(grid_2d[0]) if grid_2d else 0
+                for y in range(min(h, self.GRID_SIZE)):
+                    for x in range(min(w, self.GRID_SIZE)):
+                        arr[y, x] = int(grid_2d[y][x]) % self.NUM_COLORS
+        # else: arr stays all-zeros
 
         tensor = torch.zeros(self.NUM_COLORS, self.GRID_SIZE, self.GRID_SIZE)
         indices = torch.from_numpy(arr).long().unsqueeze(0)

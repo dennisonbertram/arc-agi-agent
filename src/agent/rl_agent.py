@@ -80,9 +80,6 @@ class RLAgent(BaseAgent):
                 6: GameAction.ACTION6, 7: GameAction.ACTION7,
             }
             ga = action_map.get(action_int, GameAction.ACTION1)
-            if action_int == 6:
-                ga.set_data({"x": x.item(), "y": y.item()})
-            ga.reasoning = f"RL policy action {action_int}"
             return ga
         except ImportError:
             return action_int

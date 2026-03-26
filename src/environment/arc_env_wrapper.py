@@ -52,7 +52,12 @@ class ArcEnvWrapper:
         if self._env and HAS_ARC:
             action = self._to_game_action(action_type, x, y)
             data = {"x": x, "y": y} if action_type == 6 else None
-            self.current_frame = self._env.step(action, data=data)
+            try:
+                self.current_frame = self._env.step(action, data=data)
+            except Exception as e:
+                import logging
+                logging.warning(f"Step error for action {action_type} ({action}): {e}. Keeping previous frame.")
+                # current_frame is unchanged; count action and continue
         else:
             grid = [[np.random.randint(0, 16) for _ in range(64)] for _ in range(64)]
             self.current_frame = MockFrame(frame=[grid])
@@ -69,10 +74,13 @@ class ArcEnvWrapper:
         return self._obs(), reward, done, info
 
     def _obs(self):
+        frame = self.current_frame
+        if frame is None:
+            frame = MockFrame(frame=[[[0] * self.processor.GRID_SIZE for _ in range(self.processor.GRID_SIZE)]])
         return {
-            "grid": self.processor.frame_to_tensor(self.current_frame),
-            "aux": self.processor.extract_aux_features(self.current_frame, self.action_count, self.prev_action),
-            "available_actions": self.processor.get_available_actions_mask(self.current_frame),
+            "grid": self.processor.frame_to_tensor(frame),
+            "aux": self.processor.extract_aux_features(frame, self.action_count, self.prev_action),
+            "available_actions": self.processor.get_available_actions_mask(frame),
         }
 
     def _grid(self):
@@ -89,7 +97,4 @@ class ArcEnvWrapper:
         m = {0: GameAction.RESET, 1: GameAction.ACTION1, 2: GameAction.ACTION2,
              3: GameAction.ACTION3, 4: GameAction.ACTION4, 5: GameAction.ACTION5,
              6: GameAction.ACTION6, 7: GameAction.ACTION7}
-        a = m.get(at, GameAction.ACTION1)
-        if at == 6:
-            a.set_data({"x": x, "y": y})
-        return a
+        return m.get(at, GameAction.ACTION1)
