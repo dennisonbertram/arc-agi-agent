@@ -14,6 +14,7 @@ def shaper():
         reset_penalty=-0.1,
         grid_change_bonus=0.02,
         no_change_penalty=-0.005,
+        novelty_bonus=0.1,
     )
 
 
@@ -159,3 +160,61 @@ class TestGridChangeBonus:
         r = shaper.compute_reward(None, None, "NOT_FINISHED", action_type=1,
                                   levels_before=0, levels_after=0)
         assert pytest.approx(r, abs=1e-4) == shaper.step_cost
+
+
+class TestNoveltyBonus:
+    def test_novelty_bonus_applied_when_novel(self, shaper):
+        r_novel = shaper.compute_reward(None, None, "NOT_FINISHED", action_type=1,
+                                        levels_before=0, levels_after=0,
+                                        info={"is_novel_state": True})
+        r_no_novel = shaper.compute_reward(None, None, "NOT_FINISHED", action_type=1,
+                                           levels_before=0, levels_after=0,
+                                           info={"is_novel_state": False})
+        assert r_novel > r_no_novel
+
+    def test_novelty_bonus_value(self, shaper):
+        r = shaper.compute_reward(None, None, "NOT_FINISHED", action_type=1,
+                                  levels_before=0, levels_after=0,
+                                  info={"is_novel_state": True})
+        expected = shaper.step_cost + shaper.novelty_bonus
+        assert pytest.approx(r, abs=1e-4) == expected
+
+    def test_no_novelty_when_info_missing(self, shaper):
+        r = shaper.compute_reward(None, None, "NOT_FINISHED", action_type=1,
+                                  levels_before=0, levels_after=0)
+        assert pytest.approx(r, abs=1e-4) == shaper.step_cost
+
+    def test_no_novelty_when_info_none(self, shaper):
+        r = shaper.compute_reward(None, None, "NOT_FINISHED", action_type=1,
+                                  levels_before=0, levels_after=0, info=None)
+        assert pytest.approx(r, abs=1e-4) == shaper.step_cost
+
+    def test_shape_reward_applies_novelty(self, shaper):
+        base = 1.0
+        r = shaper.shape_reward(base, {"is_novel_state": True})
+        assert pytest.approx(r, abs=1e-4) == base + shaper.novelty_bonus
+
+    def test_shape_reward_no_novelty(self, shaper):
+        base = 1.0
+        r = shaper.shape_reward(base, {"is_novel_state": False})
+        assert pytest.approx(r, abs=1e-4) == base
+
+    def test_default_novelty_bonus_value(self):
+        shaper_default = RewardShaper()
+        assert shaper_default.novelty_bonus == 0.1
+
+    def test_default_win_reward(self):
+        shaper_default = RewardShaper()
+        assert shaper_default.win_reward == 100.0
+
+    def test_default_level_bonus(self):
+        shaper_default = RewardShaper()
+        assert shaper_default.level_bonus == 50.0
+
+    def test_default_step_cost(self):
+        shaper_default = RewardShaper()
+        assert shaper_default.step_cost == -0.05
+
+    def test_default_grid_change_bonus(self):
+        shaper_default = RewardShaper()
+        assert shaper_default.grid_change_bonus == 0.02

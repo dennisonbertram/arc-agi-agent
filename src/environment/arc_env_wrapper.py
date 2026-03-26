@@ -29,6 +29,7 @@ class ArcEnvWrapper:
         self.current_frame = None
         self._env = None
         self.valid_actions = None  # None means use frame's available_actions
+        self.seen_states: set = set()
 
         if HAS_ARC:
             from arc_agi import Arcade, OperationMode
@@ -48,6 +49,7 @@ class ArcEnvWrapper:
         self.prev_action = 0
         self.prev_grid = None
         self.prev_levels = 0
+        self.seen_states = set()
         if self._env:
             time.sleep(0.05)  # base delay to stay under 600 RPM
             self.current_frame = self._env.reset()
@@ -108,11 +110,24 @@ class ArcEnvWrapper:
         curr_levels = getattr(self.current_frame, 'levels_completed', 0)
         state = str(getattr(self.current_frame, 'state', 'NOT_FINISHED'))
 
+        # Novelty detection: hash the current grid to see if this state was visited before
+        curr_grid = self._grid()
+        is_novel = False
+        try:
+            import torch
+            grid_tensor = self.processor.frame_to_tensor(self.current_frame)
+            grid_hash = hash(grid_tensor.numpy().tobytes())
+            is_novel = grid_hash not in self.seen_states
+            self.seen_states.add(grid_hash)
+        except Exception:
+            pass
+
         reward = self.reward_shaper.compute_reward(
-            self.prev_grid, self._grid(), state, action_type, self.prev_levels, curr_levels)
+            self.prev_grid, curr_grid, state, action_type, self.prev_levels, curr_levels,
+            info={"is_novel_state": is_novel})
         done = step_error_done or "WIN" in state or self.action_count >= self.max_actions
         info = {"action_count": self.action_count, "levels_completed": curr_levels, "state": state,
-                "step_error": step_error_done}
+                "step_error": step_error_done, "is_novel_state": is_novel}
         self.prev_action = action_type
         return self._obs(), reward, done, info
 
